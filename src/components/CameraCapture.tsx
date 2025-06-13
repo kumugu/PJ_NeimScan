@@ -10,9 +10,17 @@ interface CameraCaptureProps {
 }
 
 export default function CameraCapture({ onCapture, onError }: CameraCaptureProps) {
+  // ✅ 1. 모든 useState를 먼저 선언 (조건 없이, 항상 같은 순서)
+  const [isCapturing, setIsCapturing] = useState(false);
+  const [showPermissionGuide, setShowPermissionGuide] = useState(false);
+  const [isCameraActive, setIsCameraActive] = useState(false);
+  const [isMounted, setIsMounted] = useState(false);
+
+  // ✅ 2. 모든 useRef를 다음에 선언
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
+  // ✅ 3. useCamera 훅을 항상 같은 위치에서 호출
   const {
     stream,
     isLoading,
@@ -24,24 +32,13 @@ export default function CameraCapture({ onCapture, onError }: CameraCaptureProps
     resetCamera
   } = useCamera();
 
-  const [isCapturing, setIsCapturing] = useState(false);
-  const [showPermissionGuide, setShowPermissionGuide] = useState(false);
-  const [isCameraActive, setIsCameraActive] = useState(false);
-  const [isMounted, setIsMounted] = useState(false);
-
+  // ✅ 4. 모든 useEffect를 조건부 렌더링 이전에 배치 (항상 같은 순서)
+  // Effect 1: 마운트 상태 관리
   useEffect(() => {
     setIsMounted(true);
   }, []);
 
-  // 렌더링 시작 부분에 추가
-  if (!isMounted) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-500"></div>
-      </div>
-    );
-  }
-
+  // Effect 2: 스트림 상태 관리
   useEffect(() => {
     if (stream && videoRef.current) {
       videoRef.current.srcObject = stream;
@@ -51,12 +48,15 @@ export default function CameraCapture({ onCapture, onError }: CameraCaptureProps
     }
   }, [stream]);
 
+  // Effect 3: 에러 처리
   useEffect(() => {
     if (error) {
       onError(error);
     }
   }, [error, onError]);
 
+  // ✅ 5. 모든 useCallback을 조건부 렌더링 이전에 배치 (항상 같은 순서)
+  // Callback 1: 이미지 캡처
   const captureImage = useCallback(async () => {
     if (!videoRef.current || !canvasRef.current || isCapturing || !stream) return;
 
@@ -69,14 +69,10 @@ export default function CameraCapture({ onCapture, onError }: CameraCaptureProps
 
       if (!context) throw new Error('Canvas context not available');
 
-      // 캔버스 크기를 비디오 크기에 맞춤
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
-
-      // 비디오 프레임을 캔버스에 그리기
       context.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-      // Base64 이미지 데이터 생성 (OCR 최적화를 위해 품질 높게)
       const imageData = canvas.toDataURL('image/jpeg', 0.9);
 
       const capture: CameraCaptureType = {
@@ -95,26 +91,39 @@ export default function CameraCapture({ onCapture, onError }: CameraCaptureProps
     }
   }, [isCapturing, onCapture, onError, stream]);
 
-  const handleCameraButtonClick = async () => {
-    // 카메라가 이미 활성화되어 있는 경우 촬영
+  // Callback 2: 카메라 버튼 클릭
+  const handleCameraButtonClick = useCallback(async () => {
     if (isCameraActive && stream) {
       captureImage();
       return;
     }
-
-    // 권한이 없거나 스트림이 없는 경우 권한 요청
     await requestPermission();
-  };
+  }, [isCameraActive, stream, captureImage, requestPermission]);
 
-  const handleRetryCamera = async () => {
+  // Callback 3: 카메라 재시도
+  const handleRetryCamera = useCallback(async () => {
     await resetCamera();
-  };
+  }, [resetCamera]);
 
-  const openPermissionGuide = () => {
+  // Callback 4: 권한 가이드 열기
+  const openPermissionGuide = useCallback(() => {
     setShowPermissionGuide(true);
-  };
+  }, []);
 
-  // 권한이 없는 경우 사용자 안내 화면
+  // Callback 5: 권한 가이드 닫기
+  const closePermissionGuide = useCallback(() => {
+    setShowPermissionGuide(false);
+  }, []);
+
+  // ✅ 6. 조건부 렌더링을 모든 훅 이후에 배치
+  if (!isMounted) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-500"></div>
+      </div>
+    );
+  }
+
   if (hasPermission === false) {
     return (
       <div className="flex flex-col items-center justify-center h-full p-6 text-center bg-gray-50">
@@ -158,7 +167,7 @@ export default function CameraCapture({ onCapture, onError }: CameraCaptureProps
                 <div className="flex justify-between items-center mb-4">
                   <h4 className="text-lg font-semibold text-gray-900">Safari 카메라 권한 설정</h4>
                   <button
-                    onClick={() => setShowPermissionGuide(false)}
+                    onClick={closePermissionGuide}
                     className="text-gray-400 hover:text-gray-600"
                   >
                     <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -196,7 +205,6 @@ export default function CameraCapture({ onCapture, onError }: CameraCaptureProps
     );
   }
 
-  // 권한 상태를 확인 중인 경우
   if (hasPermission === null) {
     return (
       <div className="flex flex-col items-center justify-center h-full p-6 text-center bg-gray-50">
@@ -210,9 +218,7 @@ export default function CameraCapture({ onCapture, onError }: CameraCaptureProps
           </div>
           
           <h3 className="text-xl font-semibold mb-3 text-gray-900">카메라 준비 중...</h3>
-          <p className="text-gray-700 mb-6">
-            잠시만 기다려주세요.
-          </p>
+          <p className="text-gray-700 mb-6">잠시만 기다려주세요.</p>
           
           <button
             onClick={handleCameraButtonClick}
@@ -226,10 +232,8 @@ export default function CameraCapture({ onCapture, onError }: CameraCaptureProps
     );
   }
 
-  // 카메라가 활성화된 경우
   return (
     <div className="relative w-full h-full bg-black">
-      {/* 비디오 미리보기 */}
       <video
         ref={videoRef}
         autoPlay
@@ -238,10 +242,8 @@ export default function CameraCapture({ onCapture, onError }: CameraCaptureProps
         className="w-full h-full object-cover"
       />
 
-      {/* 캡처용 숨겨진 캔버스 */}
       <canvas ref={canvasRef} className="hidden" />
 
-      {/* 에러 시 오버레이 */}
       {error && !isCameraActive && (
         <div className="absolute inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4">
           <div className="bg-white rounded-lg p-6 max-w-sm w-full text-center">
@@ -262,9 +264,7 @@ export default function CameraCapture({ onCapture, onError }: CameraCaptureProps
         </div>
       )}
 
-      {/* 카메라 UI 오버레이 */}
       <div className="absolute inset-0 flex flex-col justify-between p-4">
-        {/* 상단 컨트롤 */}
         <div className="flex justify-between items-center">
           <div className="bg-black bg-opacity-60 text-white px-4 py-2 rounded-full text-sm font-medium backdrop-blur-sm">
             {isCameraActive ? '축의금 봉투를 화면에 맞춰 주세요' : '카메라 시작하기'}
@@ -283,11 +283,9 @@ export default function CameraCapture({ onCapture, onError }: CameraCaptureProps
           )}
         </div>
 
-        {/* 촬영 가이드 프레임 (카메라가 활성화된 경우에만) */}
         {isCameraActive && (
           <div className="flex-1 flex items-center justify-center px-8">
             <div className="relative border-2 border-white border-dashed rounded-xl w-full max-w-sm aspect-[4/3] flex items-center justify-center">
-              {/* 모서리 포커스 인디케이터 */}
               <div className="absolute top-2 left-2 w-6 h-6 border-l-2 border-t-2 border-white"></div>
               <div className="absolute top-2 right-2 w-6 h-6 border-r-2 border-t-2 border-white"></div>
               <div className="absolute bottom-2 left-2 w-6 h-6 border-l-2 border-b-2 border-white"></div>
@@ -300,10 +298,8 @@ export default function CameraCapture({ onCapture, onError }: CameraCaptureProps
           </div>
         )}
 
-        {/* 하단 컨트롤 */}
         <div className="flex justify-center items-center">
           <div className="flex items-center space-x-6">
-            {/* 촬영/시작 버튼 */}
             <button
               onClick={handleCameraButtonClick}
               disabled={isCapturing || isLoading}
@@ -323,12 +319,10 @@ export default function CameraCapture({ onCapture, onError }: CameraCaptureProps
               ) : isCapturing ? (
                 <div className="absolute inset-2 border-2 border-primary-500 rounded-full animate-pulse" />
               ) : isCameraActive ? (
-                // 촬영 버튼 (카메라 아이콘)
                 <svg className="w-8 h-8 mx-auto text-gray-800" fill="currentColor" viewBox="0 0 24 24">
                   <path d="M12 15.5A3.5 3.5 0 0 1 8.5 12A3.5 3.5 0 0 1 12 8.5a3.5 3.5 0 0 1 3.5 3.5a3.5 3.5 0 0 1-3.5 3.5m7.43-2.53c.04-.32.07-.64.07-.97c0-.33-.03-.66-.07-1L21.99 10c-.25-2.69-2.61-5-5.33-5.24l-.21-1.77C16.24 2.45 15.47 2 14.59 2H9.41c-.88 0-1.65.45-1.86 1.01L7.34 4.78C4.62 5.03 2.26 7.34 2.01 10L4.57 11c-.04.34-.07.67-.07 1c0 .33.03.65.07.97L2.01 14c.25 2.66 2.61 4.97 5.33 5.22l.21 1.77C7.76 21.55 8.53 22 9.41 22h5.18c.88 0 1.65-.45 1.86-1.01l.21-1.76C19.38 18.97 21.74 16.66 21.99 14l-2.56-1.03Z"/>
                 </svg>
               ) : (
-                // 시작 버튼 (플레이 아이콘)
                 <svg className="w-8 h-8 mx-auto" fill="currentColor" viewBox="0 0 24 24">
                   <path d="M8 5v14l11-7z"/>
                 </svg>
@@ -338,7 +332,6 @@ export default function CameraCapture({ onCapture, onError }: CameraCaptureProps
         </div>
       </div>
 
-      {/* 촬영 중 오버레이 */}
       {isCapturing && (
         <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center">
           <div className="bg-white rounded-lg p-6 text-center">
