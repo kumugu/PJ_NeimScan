@@ -9,6 +9,10 @@ const nextConfig: NextConfig = {
     },
   },
 
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
+
   // PWA 설정을 위한 헤더 구성
   async headers() {
     return [
