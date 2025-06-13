@@ -12,6 +12,7 @@ interface CameraCaptureProps {
 export default function CameraCapture({ onCapture, onError }: CameraCaptureProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  
   const {
     stream,
     isLoading,
@@ -19,15 +20,34 @@ export default function CameraCapture({ onCapture, onError }: CameraCaptureProps
     hasPermission,
     requestPermission,
     switchCamera,
-    currentFacingMode
+    currentFacingMode,
+    resetCamera
   } = useCamera();
 
   const [isCapturing, setIsCapturing] = useState(false);
-  const [showGuide, setShowGuide] = useState(true);
+  const [showPermissionGuide, setShowPermissionGuide] = useState(false);
+  const [isCameraActive, setIsCameraActive] = useState(false);
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
+  // 렌더링 시작 부분에 추가
+  if (!isMounted) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-500"></div>
+      </div>
+    );
+  }
 
   useEffect(() => {
     if (stream && videoRef.current) {
       videoRef.current.srcObject = stream;
+      setIsCameraActive(true);
+    } else {
+      setIsCameraActive(false);
     }
   }, [stream]);
 
@@ -37,16 +57,8 @@ export default function CameraCapture({ onCapture, onError }: CameraCaptureProps
     }
   }, [error, onError]);
 
-  // 가이드 자동 숨김
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setShowGuide(false);
-    }, 3000);
-    return () => clearTimeout(timer);
-  }, []);
-
   const captureImage = useCallback(async () => {
-    if (!videoRef.current || !canvasRef.current || isCapturing) return;
+    if (!videoRef.current || !canvasRef.current || isCapturing || !stream) return;
 
     setIsCapturing(true);
     
@@ -64,7 +76,7 @@ export default function CameraCapture({ onCapture, onError }: CameraCaptureProps
       // 비디오 프레임을 캔버스에 그리기
       context.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-      // Base64 이미지 데이터 생성 (고품질)
+      // Base64 이미지 데이터 생성 (OCR 최적화를 위해 품질 높게)
       const imageData = canvas.toDataURL('image/jpeg', 0.9);
 
       const capture: CameraCaptureType = {
@@ -81,37 +93,142 @@ export default function CameraCapture({ onCapture, onError }: CameraCaptureProps
     } finally {
       setIsCapturing(false);
     }
-  }, [isCapturing, onCapture, onError]);
+  }, [isCapturing, onCapture, onError, stream]);
 
-  if (!hasPermission) {
+  const handleCameraButtonClick = async () => {
+    // 카메라가 이미 활성화되어 있는 경우 촬영
+    if (isCameraActive && stream) {
+      captureImage();
+      return;
+    }
+
+    // 권한이 없거나 스트림이 없는 경우 권한 요청
+    await requestPermission();
+  };
+
+  const handleRetryCamera = async () => {
+    await resetCamera();
+  };
+
+  const openPermissionGuide = () => {
+    setShowPermissionGuide(true);
+  };
+
+  // 권한이 없는 경우 사용자 안내 화면
+  if (hasPermission === false) {
     return (
       <div className="flex flex-col items-center justify-center h-full p-6 text-center bg-gray-50">
-        <div className="bg-white rounded-lg shadow-lg p-6 max-w-sm w-full">
+        <div className="bg-white rounded-lg shadow-lg p-8 max-w-md w-full">
           <div className="mb-6">
-            <svg className="w-16 h-16 mx-auto text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
-            </svg>
+            <div className="w-20 h-20 mx-auto mb-4 bg-red-100 rounded-full flex items-center justify-center">
+              <svg className="w-10 h-10 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+              </svg>
+            </div>
           </div>
-          <h3 className="text-lg font-semibold mb-2 text-gray-800">카메라 권한 필요</h3>
-          <p className="text-gray-600 mb-6 text-sm leading-relaxed">
-            축의금 봉투를 촬영하기 위해<br />
-            카메라 접근 권한이 필요합니다.
+          
+          <h3 className="text-xl font-semibold mb-3 text-gray-900">카메라 권한이 차단됨</h3>
+          <p className="text-gray-700 mb-6 leading-relaxed">
+            축의금 봉투를 스캔하려면 카메라 접근 권한이 필요합니다.
           </p>
+          
+          <div className="space-y-3">
+            <button
+              onClick={requestPermission}
+              disabled={isLoading}
+              className="w-full bg-primary-500 text-white px-6 py-3 rounded-lg font-medium hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isLoading ? '권한 확인 중...' : '카메라 권한 다시 요청'}
+            </button>
+            
+            <button
+              onClick={openPermissionGuide}
+              className="w-full border border-gray-300 text-gray-700 px-6 py-3 rounded-lg font-medium hover:bg-gray-50"
+            >
+              설정 방법 보기
+            </button>
+          </div>
+        </div>
+
+        {/* 권한 설정 가이드 모달 */}
+        {showPermissionGuide && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-lg max-w-lg w-full max-h-[80vh] overflow-y-auto">
+              <div className="p-6">
+                <div className="flex justify-between items-center mb-4">
+                  <h4 className="text-lg font-semibold text-gray-900">Safari 카메라 권한 설정</h4>
+                  <button
+                    onClick={() => setShowPermissionGuide(false)}
+                    className="text-gray-400 hover:text-gray-600"
+                  >
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+                
+                <div className="space-y-4">
+                  <div className="p-4 bg-blue-50 rounded-lg">
+                    <h5 className="font-medium text-blue-900 mb-2">Safari 브라우저에서:</h5>
+                    <ol className="text-sm text-blue-800 space-y-1 list-decimal list-inside">
+                      <li>주소창 왼쪽의 "aA" 버튼 터치</li>
+                      <li>"웹사이트 설정" 선택</li>
+                      <li>"카메라"를 "허용"으로 변경</li>
+                      <li>페이지 새로고침</li>
+                    </ol>
+                  </div>
+                  
+                  <div className="p-4 bg-amber-50 rounded-lg">
+                    <h5 className="font-medium text-amber-900 mb-2">설정 앱에서 (전체 허용):</h5>
+                    <ol className="text-sm text-amber-800 space-y-1 list-decimal list-inside">
+                      <li>설정 - Safari</li>
+                      <li>"카메라" 선택</li>
+                      <li>"허용"으로 변경</li>
+                    </ol>
+                    <p className="text-xs text-amber-700 mt-2">⚠️ 모든 웹사이트에 카메라 권한이 부여됩니다</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // 권한 상태를 확인 중인 경우
+  if (hasPermission === null) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full p-6 text-center bg-gray-50">
+        <div className="bg-white rounded-lg shadow-lg p-8 max-w-md w-full">
+          <div className="mb-6">
+            <div className="w-20 h-20 mx-auto mb-4 bg-blue-100 rounded-full flex items-center justify-center">
+              <svg className="w-10 h-10 text-blue-600 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            </div>
+          </div>
+          
+          <h3 className="text-xl font-semibold mb-3 text-gray-900">카메라 준비 중...</h3>
+          <p className="text-gray-700 mb-6">
+            잠시만 기다려주세요.
+          </p>
+          
           <button
-            onClick={requestPermission}
+            onClick={handleCameraButtonClick}
             disabled={isLoading}
             className="w-full bg-primary-500 text-white px-6 py-3 rounded-lg font-medium hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {isLoading ? '권한 요청 중...' : '카메라 권한 허용'}
+            {isLoading ? '카메라 시작 중...' : '카메라 시작하기'}
           </button>
         </div>
       </div>
     );
   }
 
+  // 카메라가 활성화된 경우
   return (
-    <div className="relative w-full h-full bg-black overflow-hidden">
+    <div className="relative w-full h-full bg-black">
       {/* 비디오 미리보기 */}
       <video
         ref={videoRef}
@@ -124,72 +241,112 @@ export default function CameraCapture({ onCapture, onError }: CameraCaptureProps
       {/* 캡처용 숨겨진 캔버스 */}
       <canvas ref={canvasRef} className="hidden" />
 
-      {/* 오버레이 UI */}
-      <div className="absolute inset-0 flex flex-col justify-between">
-        {/* 상단 컨트롤 */}
-        <div className="flex justify-between items-center p-4 bg-gradient-to-b from-black/50 to-transparent">
-          <div className={`bg-black/70 text-white px-3 py-2 rounded-full text-sm transition-opacity duration-300 ${showGuide ? 'opacity-100' : 'opacity-0'}`}>
-            📝 축의금 봉투를 화면에 맞춰 주세요
+      {/* 에러 시 오버레이 */}
+      {error && !isCameraActive && (
+        <div className="absolute inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg p-6 max-w-sm w-full text-center">
+            <div className="w-16 h-16 mx-auto mb-4 bg-red-100 rounded-full flex items-center justify-center">
+              <svg className="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <h4 className="text-lg font-semibold mb-2 text-gray-900">카메라 오류</h4>
+            <p className="text-sm text-gray-600 mb-4">{error}</p>
+            <button
+              onClick={handleRetryCamera}
+              className="w-full bg-primary-500 text-white px-4 py-2 rounded-lg font-medium hover:bg-primary-600"
+            >
+              다시 시도
+            </button>
           </div>
-          <button
-            onClick={switchCamera}
-            className="bg-black/70 text-white p-3 rounded-full hover:bg-black/80 transition-colors"
-            title="카메라 전환"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
-          </button>
+        </div>
+      )}
+
+      {/* 카메라 UI 오버레이 */}
+      <div className="absolute inset-0 flex flex-col justify-between p-4">
+        {/* 상단 컨트롤 */}
+        <div className="flex justify-between items-center">
+          <div className="bg-black bg-opacity-60 text-white px-4 py-2 rounded-full text-sm font-medium backdrop-blur-sm">
+            {isCameraActive ? '축의금 봉투를 화면에 맞춰 주세요' : '카메라 시작하기'}
+          </div>
+          
+          {isCameraActive && (
+            <button
+              onClick={switchCamera}
+              className="bg-black bg-opacity-60 text-white p-3 rounded-full hover:bg-opacity-80 backdrop-blur-sm"
+              disabled={isLoading}
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            </button>
+          )}
         </div>
 
-        {/* 촬영 가이드 프레임 */}
-        <div className="flex-1 flex items-center justify-center px-4">
-          <div className="relative">
-            {/* 가이드 프레임 */}
-            <div className="border-2 border-white/80 border-dashed rounded-xl w-72 h-44 flex items-center justify-center">
-              <div className="text-center">
-                <svg className="w-8 h-8 text-white/70 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                <span className="text-white/70 text-sm font-medium">
-                  축의금 봉투
-                </span>
-              </div>
+        {/* 촬영 가이드 프레임 (카메라가 활성화된 경우에만) */}
+        {isCameraActive && (
+          <div className="flex-1 flex items-center justify-center px-8">
+            <div className="relative border-2 border-white border-dashed rounded-xl w-full max-w-sm aspect-[4/3] flex items-center justify-center">
+              {/* 모서리 포커스 인디케이터 */}
+              <div className="absolute top-2 left-2 w-6 h-6 border-l-2 border-t-2 border-white"></div>
+              <div className="absolute top-2 right-2 w-6 h-6 border-r-2 border-t-2 border-white"></div>
+              <div className="absolute bottom-2 left-2 w-6 h-6 border-l-2 border-b-2 border-white"></div>
+              <div className="absolute bottom-2 right-2 w-6 h-6 border-r-2 border-b-2 border-white"></div>
+              
+              <span className="text-white text-sm font-medium bg-black bg-opacity-50 px-3 py-1 rounded-full">
+                봉투를 이 영역에 맞춰 주세요
+              </span>
             </div>
-            
-            {/* 모서리 포커스 인디케이터 */}
-            <div className="absolute top-0 left-0 w-6 h-6 border-t-4 border-l-4 border-white rounded-tl-lg"></div>
-            <div className="absolute top-0 right-0 w-6 h-6 border-t-4 border-r-4 border-white rounded-tr-lg"></div>
-            <div className="absolute bottom-0 left-0 w-6 h-6 border-b-4 border-l-4 border-white rounded-bl-lg"></div>
-            <div className="absolute bottom-0 right-0 w-6 h-6 border-b-4 border-r-4 border-white rounded-br-lg"></div>
           </div>
-        </div>
+        )}
 
         {/* 하단 컨트롤 */}
-        <div className="p-6 bg-gradient-to-t from-black/50 to-transparent">
-          <div className="flex justify-center items-center">
-            {/* 촬영 버튼 */}
+        <div className="flex justify-center items-center">
+          <div className="flex items-center space-x-6">
+            {/* 촬영/시작 버튼 */}
             <button
-              onClick={captureImage}
+              onClick={handleCameraButtonClick}
               disabled={isCapturing || isLoading}
-              className="relative w-20 h-20 bg-white rounded-full border-4 border-gray-300 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg transition-all duration-200 active:scale-95"
+              className={`
+                relative w-20 h-20 rounded-full border-4 border-white 
+                ${isCameraActive 
+                  ? 'bg-white hover:bg-gray-100' 
+                  : 'bg-primary-500 hover:bg-primary-600 text-white'
+                }
+                disabled:opacity-50 disabled:cursor-not-allowed
+                transition-all duration-200 ease-in-out
+                shadow-lg
+              `}
             >
-              {isCapturing ? (
-                <div className="absolute inset-4 border-2 border-primary-500 rounded-full animate-pulse"></div>
+              {isLoading ? (
+                <div className="w-6 h-6 border-2 border-current border-t-transparent rounded-full animate-spin mx-auto" />
+              ) : isCapturing ? (
+                <div className="absolute inset-2 border-2 border-primary-500 rounded-full animate-pulse" />
+              ) : isCameraActive ? (
+                // 촬영 버튼 (카메라 아이콘)
+                <svg className="w-8 h-8 mx-auto text-gray-800" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M12 15.5A3.5 3.5 0 0 1 8.5 12A3.5 3.5 0 0 1 12 8.5a3.5 3.5 0 0 1 3.5 3.5a3.5 3.5 0 0 1-3.5 3.5m7.43-2.53c.04-.32.07-.64.07-.97c0-.33-.03-.66-.07-1L21.99 10c-.25-2.69-2.61-5-5.33-5.24l-.21-1.77C16.24 2.45 15.47 2 14.59 2H9.41c-.88 0-1.65.45-1.86 1.01L7.34 4.78C4.62 5.03 2.26 7.34 2.01 10L4.57 11c-.04.34-.07.67-.07 1c0 .33.03.65.07.97L2.01 14c.25 2.66 2.61 4.97 5.33 5.22l.21 1.77C7.76 21.55 8.53 22 9.41 22h5.18c.88 0 1.65-.45 1.86-1.01l.21-1.76C19.38 18.97 21.74 16.66 21.99 14l-2.56-1.03Z"/>
+                </svg>
               ) : (
-                <div className="absolute inset-4 bg-white rounded-full"></div>
+                // 시작 버튼 (플레이 아이콘)
+                <svg className="w-8 h-8 mx-auto" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M8 5v14l11-7z"/>
+                </svg>
               )}
             </button>
           </div>
-          
-          {/* 안내 메시지 */}
-          <div className="mt-4 text-center">
-            <p className="text-white/80 text-sm">
-              💡 손글씨가 선명하게 보이도록 촬영해주세요
-            </p>
-          </div>
         </div>
       </div>
+
+      {/* 촬영 중 오버레이 */}
+      {isCapturing && (
+        <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+          <div className="bg-white rounded-lg p-6 text-center">
+            <div className="w-8 h-8 border-2 border-primary-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+            <p className="text-gray-700 font-medium">촬영 중...</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
