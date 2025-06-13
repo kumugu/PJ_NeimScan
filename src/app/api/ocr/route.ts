@@ -1,142 +1,139 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-// Clova OCR API 타입 정의
-interface ClovaOCRRequest {
-  version: string;
-  requestId: string;
-  timestamp: number;
-  lang: string;
-  images: Array<{
-    format: string;
-    name: string;
-    data?: string;
-    url?: string;
-  }>;
-}
-
-interface ClovaOCRResponse {
-  version: string;
-  requestId: string;
-  timestamp: number;
-  images: Array<{
-    inferResult: string;
-    message: string;
-    fields: Array<{
-      inferText: string;
-      inferConfidence: number;
-      type: string;
-      boundingPoly: {
-        vertices: Array<{
-          x: number;
-          y: number;
-        }>;
-      };
-    }>;
-  }>;
-}
-
 export async function POST(request: NextRequest) {
   try {
-    const { imageData, imageUrl } = await request.json();
+    const { imageData } = await request.json();
 
-    if (!imageData && !imageUrl) {
+    if (!imageData) {
       return NextResponse.json(
-        { error: '이미지 데이터 또는 URL이 필요합니다.' },
+        { error: '이미지 데이터가 필요합니다.' },
         { status: 400 }
       );
     }
 
-    // Clova OCR API 요청 구성
-    const ocrRequest: ClovaOCRRequest = {
+    // Base64에서 헤더 제거 (data:image/jpeg;base64, 부분)
+    const base64Image = imageData.replace(/^data:image\/[a-z]+;base64,/, '');
+
+    // 클로바 OCR API 요청 준비
+    const ocrRequestBody = {
+      images: [
+        {
+          format: 'jpg',
+          name: 'axesImage',
+          data: base64Image,
+        }
+      ],
+      requestId: `ocr_${Date.now()}`,
       version: 'V2',
-      requestId: `req_${Date.now()}`,
       timestamp: Date.now(),
-      lang: 'ko',
-      images: [{
-        format: 'jpg',
-        name: 'envelope_image',
-        ...(imageData ? { data: imageData.split(',')[1] } : { url: imageUrl })
-      }]
     };
 
-    // Clova OCR API 호출
+    // 클로바 OCR API 호출
     const response = await fetch(process.env.NEXT_PUBLIC_CLOVA_OCR_INVOKE_URL!, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-OCR-SECRET': process.env.CLOVA_OCR_SECRET_KEY!
+        'X-OCR-SECRET': process.env.CLOVA_OCR_SECRET_KEY!,
       },
-      body: JSON.stringify(ocrRequest)
+      body: JSON.stringify(ocrRequestBody),
     });
 
     if (!response.ok) {
       throw new Error(`OCR API 호출 실패: ${response.status}`);
     }
 
-    const ocrResult: ClovaOCRResponse = await response.json();
+    const result = await response.json();
 
-    // OCR 결과에서 텍스트 추출 및 파싱
-    const extractedData = parseOCRResult(ocrResult);
+    // OCR 결과 파싱
+    const extractedData = parseOCRResult(result);
 
     return NextResponse.json({
       success: true,
       data: extractedData,
-      rawOCR: ocrResult
+      raw: result, // 디버깅용
     });
 
   } catch (error) {
-    console.error('OCR API Error:', error);
-    
+    console.error('OCR 처리 중 오류:', error);
     return NextResponse.json(
       { 
-        error: error instanceof Error ? error.message : 'OCR 처리 중 오류가 발생했습니다.',
-        success: false 
+        error: 'OCR 처리 중 오류가 발생했습니다.',
+        details: error instanceof Error ? error.message : 'Unknown error'
       },
       { status: 500 }
     );
   }
 }
 
-// OCR 결과 파싱 함수
-function parseOCRResult(ocrResult: ClovaOCRResponse) {
-  const fields = ocrResult.images[0]?.fields || [];
+// OCR 결과에서 이름과 금액 추출
+function parseOCRResult(ocrResult: any) {
+  const extractedText: string[] = [];
   
-  let name = '';
-  let amount = '';
-  let memo = '';
-  
-  // 텍스트 필드들을 분석하여 이름, 금액, 메모 추출
-  const texts = fields.map(field => field.inferText).filter(text => text.trim());
-  
-  // 정규식 패턴들
-  const amountPattern = /(\d{1,3}(?:,?\d{3})*)\s*원?/;
-  const namePattern = /^[가-힣]{2,4}$/;
-  
-  for (const text of texts) {
-    // 금액 추출
-    const amountMatch = text.match(amountPattern);
-    if (amountMatch && !amount) {
-      amount = amountMatch[1].replace(/,/g, '');
+  try {
+    if (ocrResult.images && ocrResult.images[0] && ocrResult.images[0].fields) {
+      const fields = ocrResult.images[0].fields;
+      
+      fields.forEach((field: any) => {
+        if (field.inferText) {
+          extractedText.push(field.inferText.trim());
+        }
+      });
     }
-    
-    // 이름 추출 (한글 2-4글자)
-    else if (namePattern.test(text) && !name) {
-      name = text;
-    }
-    
-    // 메모 (축하, 감사 등의 키워드 포함)
-    else if (/축하|감사|건강|행복|번영|발전|성공/.test(text) && !memo) {
-      memo = text;
-    }
-  }
 
-  return {
-    name: name || '',
-    amount: amount || '',
-    memo: memo || '',
-    date: new Date().toISOString().split('T')[0],
-    confidence: fields.length > 0 ? 
-      fields.reduce((sum, field) => sum + field.inferConfidence, 0) / fields.length : 0,
-    extractedTexts: texts
-  };
+    // 텍스트 파싱 로직
+    let name = '';
+    let amount = 0;
+    const allText = extractedText.join(' ');
+
+    // 금액 추출 (숫자 + 원, 만원 등)
+    const amountRegex = /(\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*(?:원|만원|천원)?/g;
+    const amountMatches = allText.match(amountRegex);
+    
+    if (amountMatches && amountMatches.length > 0) {
+      const amountStr = amountMatches[0].replace(/[^\d,]/g, '');
+      amount = parseInt(amountStr.replace(/,/g, '')) || 0;
+      
+      // 만원 단위 처리
+      if (amountMatches[0].includes('만원')) {
+        amount *= 10000;
+      }
+    }
+
+    // 이름 추출 (한글 이름 패턴)
+    const nameRegex = /[가-힣]{2,4}/g;
+    const nameMatches = allText.match(nameRegex);
+    
+    if (nameMatches && nameMatches.length > 0) {
+      // 가장 긴 한글 문자열을 이름으로 추정
+      name = nameMatches.reduce((longest, current) => 
+        current.length > longest.length ? current : longest, ''
+      );
+    }
+
+    return {
+      name,
+      amount,
+      extractedText,
+      confidence: calculateConfidence(name, amount),
+    };
+
+  } catch (error) {
+    console.error('OCR 결과 파싱 오류:', error);
+    return {
+      name: '',
+      amount: 0,
+      extractedText,
+      confidence: 0,
+    };
+  }
+}
+
+// 신뢰도 계산
+function calculateConfidence(name: string, amount: number): number {
+  let confidence = 0;
+  
+  if (name && name.length >= 2) confidence += 50;
+  if (amount > 0) confidence += 50;
+  
+  return confidence;
 }
