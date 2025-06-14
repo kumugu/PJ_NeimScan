@@ -1,7 +1,8 @@
-import type { NextConfig } from 'next'
+/** @type {import('next').NextConfig} */
 import type { Configuration } from 'webpack'
 
-const nextConfig: NextConfig = {
+
+const nextConfig = {
   experimental: {
     // Next.js 15 실험적 기능
     serverActions: {
