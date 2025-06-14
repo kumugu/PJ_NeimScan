@@ -1,265 +1,121 @@
-'use client';
+import { useState, useRef, useEffect, useCallback, useLayoutEffect } from 'react';
+import type { CameraConfig, UseCameraReturn } from '../types/index';
 
-import { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react';
-
-// 브라우저 호환성을 위한 타입 정의
-interface MediaDevicePermission {
-  state: 'granted' | 'denied' | 'prompt';
-}
-
-export interface CameraHookReturn {
-  stream: MediaStream | null;
-  isLoading: boolean;
-  error: string;
-  hasPermission: boolean | null;
-  requestPermission: () => Promise<void>;
-  switchCamera: () => void;
-  currentFacingMode: 'user' | 'environment';
-  resetCamera: () => Promise<void>;
-  isClient: boolean;
-}
-
-/**
- * ✅ 수정된 Safari PWA 카메라 권한 관리 훅
- * Hook 순서 변경 문제를 해결하고 Hydration 오류를 방지
- */
-export const useCamera = (): CameraHookReturn => {
-  // ✅ 1. 모든 useState를 먼저 선언 (조건 없이)
+export const useCamera = (initialConfig: CameraConfig = {}): UseCameraReturn => {
+  // 1. 모든 useState 선언부 - 항상 동일한 순서로 호출
+  const [isClient, setIsClient] = useState(false);
   const [stream, setStream] = useState<MediaStream | null>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [error, setError] = useState<string>('');
-  const [hasPermission, setHasPermission] = useState<boolean | null>(null);
-  const [currentFacingMode, setCurrentFacingMode] = useState<'user' | 'environment'>('environment');
-  const [isClient, setIsClient] = useState<boolean>(false);
-  const [retryCount, setRetryCount] = useState<number>(0);
-  const [lastPermissionCheck, setLastPermissionCheck] = useState<number>(0);
+  const [error, setError] = useState<Error | null>(null);
+  const [isCameraReady, setIsCameraReady] = useState(false);
+  const [facingMode, setFacingMode] = useState<'user' | 'environment'>(
+    initialConfig.facingMode || 'environment'
+  );
   
-  // ✅ 2. 모든 useRef를 다음에 선언
-  const permissionRef = useRef<boolean | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-
-  // ✅ 3. useLayoutEffect로 클라이언트 체크 (렌더링 전 실행)
+  // 2. 모든 useRef 선언부
+  const mountedRef = useRef(true);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  
+  // 3. useLayoutEffect - 클라이언트 감지
   useLayoutEffect(() => {
     setIsClient(true);
+    return () => {
+      mountedRef.current = false;
+    };
   }, []);
-
-  // ✅ 4. 모든 useCallback을 조건부 로직 이전에 선언
-  const isBrowserAPIAvailable = useCallback((): boolean => {
-    return (
-      isClient &&
-      typeof window !== 'undefined' &&
-      typeof navigator !== 'undefined' &&
-      navigator.mediaDevices &&
-      typeof navigator.mediaDevices.getUserMedia === 'function'
-    );
-  }, [isClient]);
-
-  const checkPermissionStatus = useCallback(async (): Promise<boolean | null> => {
-    if (!isBrowserAPIAvailable()) {
-      return null;
-    }
-
-    try {
-      if ('permissions' in navigator && typeof navigator.permissions.query === 'function') {
-        try {
-          const permissionStatus = await navigator.permissions.query({ 
-            name: 'camera' as PermissionName 
-          });
-          
-          if (permissionStatus.state === 'granted') {
-            return true;
-          } else if (permissionStatus.state === 'denied') {
-            return false;
-          } else {
-            return null;
-          }
-        } catch (permErr) {
-          console.warn('Permissions API 사용 불가:', permErr);
-        }
-      }
-      
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const videoDevices = devices.filter((device: MediaDeviceInfo) => device.kind === 'videoinput');
-
-      if (videoDevices.length > 0 && videoDevices.some(device => device.label !== '')) {
-        return true;
-      }
-      
-      if (videoDevices.length > 0) {
-        return null;
-      }
-      
-      return false;
-    } catch (err) {
-      console.error('권한 확인 중 오류:', err);
-      return null;
-    }
-  }, [isBrowserAPIAvailable]);
-
-  const initializeCamera = useCallback(async () => {
-    if (!isBrowserAPIAvailable() || isLoading) {
-      return;
-    }
-    
-    setIsLoading(true);
-    setError('');
-    
-    try {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop());
-      }
-      
-      const constraints: MediaStreamConstraints = {
-        video: {
-          facingMode: currentFacingMode,
-          width: { ideal: 1280, min: 640 },
-          height: { ideal: 720, min: 480 }
-        }
-      };
-      
-      const mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
-      
-      setStream(mediaStream);
-      streamRef.current = mediaStream;
-      setHasPermission(true);
-      permissionRef.current = true;
-      setLastPermissionCheck(Date.now());
-      setRetryCount(0);
-    } catch (err: any) {
-      console.error('카메라 초기화 오류:', err);
-      
-      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-        setHasPermission(false);
-        permissionRef.current = false;
-        setError('카메라 접근이 거부되었습니다. 설정에서 권한을 허용해주세요.');
-      } else if (err.name === 'NotFoundError') {
-        setError('카메라를 찾을 수 없습니다. 카메라가 연결되어 있는지 확인해주세요.');
-      } else if (err.name === 'NotReadableError' || err.name === 'AbortError') {
-        setError('카메라에 접근할 수 없습니다. 다른 앱에서 사용 중일 수 있습니다.');
-        
-        if (retryCount < 3) {
-          setTimeout(() => {
-            setRetryCount(prev => prev + 1);
-            initializeCamera();
-          }, 1000 * (retryCount + 1));
-        }
-      } else if (err.name === 'OverconstrainedError') {
-        setError('요청한 카메라 설정을 지원하지 않습니다.');
-      } else {
-        setError(`카메라 접근 중 오류가 발생했습니다: ${err.message}`);
-      }
-      
-      setStream(null);
-      streamRef.current = null;
-    } finally {
-      setIsLoading(false);
-    }
-  }, [currentFacingMode, isLoading, retryCount, isBrowserAPIAvailable]);
-
-  const requestPermission = useCallback(async () => {
-    if (!isBrowserAPIAvailable()) {
-      setError('브라우저에서 카메라를 지원하지 않습니다.');
-      return;
-    }
-    
-    await initializeCamera();
-  }, [initializeCamera, isBrowserAPIAvailable]);
-
-  const switchCamera = useCallback(() => {
-    if (!isBrowserAPIAvailable()) return;
-    setCurrentFacingMode(prev => prev === 'user' ? 'environment' : 'user');
-  }, [isBrowserAPIAvailable]);
-
-  const resetCamera = useCallback(async () => {
-    if (!isBrowserAPIAvailable()) return;
-    
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
-    }
-    
-    setStream(null);
-    streamRef.current = null;
-    
-    if (permissionRef.current === true) {
-      await initializeCamera();
-    }
-  }, [initializeCamera, isBrowserAPIAvailable]);
   
-  // ✅ 5. 모든 useEffect를 항상 같은 순서로 호출
-  // Effect 1: 초기 권한 확인
-  useEffect(() => {
-    let mounted = true;
-    
-    const checkInitialPermission = async () => {
-      // ✅ 조건 체크는 useEffect 내부에서 처리
-      if (!isClient || !mounted) return;
-      
-      const permissionStatus = await checkPermissionStatus();
-      if (!mounted) return;
-      
-      setHasPermission(permissionStatus);
-      permissionRef.current = permissionStatus;
-      
-      if (permissionStatus === true) {
-        await initializeCamera();
-      }
-    };
-    
-    checkInitialPermission();
-    
-    return () => {
-      mounted = false;
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop());
-      }
-    };
-  }, [isClient, checkPermissionStatus, initializeCamera]);
-  
-  // Effect 2: 카메라 방향 변경 처리
-  useEffect(() => {
-    // ✅ 조건 체크는 useEffect 내부에서 처리
-    if (isClient && permissionRef.current === true) {
-      initializeCamera();
-    }
-  }, [currentFacingMode, initializeCamera, isClient]);
-  
-  // Effect 3: 페이지 가시성 변경 처리
-  useEffect(() => {
-    // ✅ 조건 체크는 useEffect 내부에서 처리
+  // 4. 모든 useCallback 선언부 - 의존성 배열 정확히 지정
+  const toggleFacingMode = useCallback(() => {
     if (!isClient) return;
-
-    const handleVisibilityChange = async () => {
-      if (document.visibilityState === 'visible') {
-        const timeSinceLastCheck = Date.now() - lastPermissionCheck;
-        
-        if (permissionRef.current === true && (!streamRef.current || timeSinceLastCheck > 60000)) {
-          await resetCamera();
+    setFacingMode(prev => prev === 'user' ? 'environment' : 'user');
+  }, [isClient]);
+  
+  const takePhoto = useCallback(() => {
+    if (!isClient || !stream || !videoRef.current || !canvasRef.current) {
+      return null;
+    }
+    
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    const context = canvas.getContext('2d');
+    
+    if (!context) return null;
+    
+    // 고해상도로 캔버스 설정 (OCR 최적화)
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    
+    // 비디오 프레임을 캔버스에 그리기
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    
+    // PNG 형식으로 데이터 URL 생성 (OCR에 최적)
+    return canvas.toDataURL('image/png');
+  }, [isClient, stream]);
+  
+  // 5. 모든 useEffect 선언부
+  // 카메라 스트림 초기화
+  useEffect(() => {
+    if (!isClient) return;
+    
+    const initializeStream = async () => {
+      try {
+        if (mountedRef.current) {
+          const constraints: MediaStreamConstraints = {
+            video: {
+              facingMode: facingMode,
+              width: initialConfig.width || { ideal: 1920 },
+              height: initialConfig.height || { ideal: 1080 }
+            }
+            // audio 완전 제거 - OCR 목적이므로 불필요
+          };
+          
+          const mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+          
+          if (mountedRef.current) {
+            setStream(mediaStream);
+            setError(null);
+          }
+        }
+      } catch (err) {
+        if (mountedRef.current) {
+          setError(err as Error);
+          setStream(null);
         }
       }
     };
     
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('focus', handleVisibilityChange);
-    window.addEventListener('pageshow', handleVisibilityChange);
+    initializeStream();
     
+    // 정리 함수
     return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('focus', handleVisibilityChange);
-      window.removeEventListener('pageshow', handleVisibilityChange);
+      if (stream) {
+        const tracks = (stream as MediaStream).getTracks();
+        tracks.forEach((track: MediaStreamTrack) => track.stop());
+      }
     };
-  }, [lastPermissionCheck, resetCamera, isClient]);
-
+  }, [isClient, facingMode, initialConfig.width, initialConfig.height]);
+  
+  // 카메라 준비 상태 업데이트
+  useEffect(() => {
+    if (!stream) {
+      setIsCameraReady(false);
+      return;
+    }
+    
+    if (mountedRef.current) {
+      setIsCameraReady(true);
+    }
+  }, [stream]);
+  
   return {
+    isClient,
     stream,
-    isLoading,
     error,
-    hasPermission,
-    requestPermission,
-    switchCamera,
-    currentFacingMode,
-    resetCamera,
-    isClient
+    isCameraReady,
+    facingMode,
+    videoRef,
+    canvasRef,
+    toggleFacingMode,
+    takePhoto
   };
 };
-
-export default useCamera;

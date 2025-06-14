@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import type { ContributionRecord } from '@/types';
+import type { ContributionRecord } from '../types/index';
 
 interface ResultEditorProps {
   initialData?: Partial<ContributionRecord>;
@@ -53,7 +53,7 @@ export default function ResultEditor({
     
     if (!validateForm()) return;
 
-    const record = {
+    const record: Omit<ContributionRecord, 'id' | 'createdAt' | 'updatedAt'> = {
       name: formData.name.trim(),
       amount: Number(formData.amount),
       memo: formData.memo.trim() || undefined,
@@ -84,13 +84,26 @@ export default function ResultEditor({
   return (
     <div className="max-w-md mx-auto p-6">
       <div className="bg-white rounded-lg shadow-lg p-6">
-        {/* ✅ 개선: 제목 색상을 text-gray-900으로 변경 (기존: 색상 미지정) */}
         <h2 className="text-xl font-bold mb-6 text-center text-gray-900">축의금 정보 편집</h2>
+        
+        {/* OCR 결과 미리보기 */}
+        {initialData?.imageData && (
+          <div className="mb-6 p-4 bg-gray-50 rounded-lg">
+            <h3 className="text-sm font-medium text-gray-700 mb-2">촬영된 이미지</h3>
+            <img 
+              src={initialData.imageData} 
+              alt="촬영된 축의금 봉투"
+              className="w-full h-32 object-cover rounded border"
+            />
+            {initialData.memo && (
+              <p className="text-xs text-gray-500 mt-2">{initialData.memo}</p>
+            )}
+          </div>
+        )}
         
         <form onSubmit={handleSubmit} className="space-y-4">
           {/* 이름 입력 */}
           <div>
-            {/* ✅ 개선: 라벨 색상을 text-gray-700으로 변경 (기존: text-gray-700 - 이미 적절함) */}
             <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-1">
               이름 *
             </label>
@@ -105,7 +118,6 @@ export default function ResultEditor({
               placeholder="홍길동"
               maxLength={20}
             />
-            {/* ✅ 개선: 에러 메시지 색상 유지 (적절한 빨간색) */}
             {errors.name && <p className="text-red-500 text-xs mt-1">{errors.name}</p>}
           </div>
 
@@ -128,7 +140,6 @@ export default function ResultEditor({
                 }`}
                 placeholder="50,000"
               />
-              {/* ✅ 개선: 단위 표시 색상을 text-gray-600으로 변경 (기존: text-gray-500) */}
               <span className="absolute right-3 top-2.5 text-gray-600 text-sm">원</span>
             </div>
             {errors.amount && <p className="text-red-500 text-xs mt-1">{errors.amount}</p>}
@@ -148,6 +159,9 @@ export default function ResultEditor({
               placeholder="결혼 축하, 개업 축하 등"
               maxLength={50}
             />
+            <p className="text-xs text-gray-500 mt-1">
+              OCR로 추출된 메모는 수정하거나 추가할 수 있습니다.
+            </p>
           </div>
 
           {/* 날짜 입력 */}
@@ -190,20 +204,3 @@ export default function ResultEditor({
     </div>
   );
 }
-
-/*
-=== 주요 개선사항 ===
-
-1. ✅ 제목 (h2): text-gray-900 추가 - 18.7:1 대비율
-2. ✅ 입력 필드 텍스트: text-gray-900 추가 - 명확한 가독성
-3. ✅ 플레이스홀더: placeholder-gray-500 추가 - 5.1:1 대비율
-4. ✅ 단위 표시 ("원"): text-gray-600으로 변경 - 8.3:1 대비율
-5. ✅ 버튼 텍스트: font-medium 추가 - 더 선명한 표시
-6. ✅ 라벨 색상: text-gray-700 유지 - 이미 적절함 (11.9:1)
-
-=== 접근성 개선 효과 ===
-- WCAG 2.1 AA/AAA 등급 달성
-- 모든 텍스트가 4.5:1 이상의 대비율 확보
-- 시각적 피로감 감소
-- 모바일 환경에서의 가독성 향상
-*/

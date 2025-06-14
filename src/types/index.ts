@@ -1,49 +1,53 @@
-// 기본 타입 정의
-export interface CameraCapture {
-  id: string;
-  imageData: string; // base64
-  timestamp: Date;
-  width: number;
-  height: number;
-}
-
-export interface OCRResult {
-  text: string;
-  confidence: number;
-  boundingBox: {
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-  };
-}
 
 export interface ContributionRecord {
-  id: string;
+  id?: string;
   name: string;
   amount: number;
   memo?: string;
   date: Date;
-  createdAt: Date;
-  updatedAt: Date;
   imageData?: string;
-  ocrResults?: OCRResult[];
+  createdAt?: Date;
+  updatedAt?: Date;
 }
 
-export interface CameraState {
-  isActive: boolean;
+export interface CameraCapture {
+  imageData: string;
+  timestamp: Date;
+}
+
+export interface UseOCRReturn {
+  processOCR: (imageData: string) => Promise<OCRResult>;
   isLoading: boolean;
   error: string | null;
-  hasPermission: boolean;
-  currentFacingMode: 'user' | 'environment';
 }
 
-export interface ExportOptions {
-  format: 'xlsx' | 'csv';
-  fileName?: string;
-  includeImages?: boolean;
-  dateRange?: {
-    start: Date;
-    end: Date;
-  };
+export interface OCRResult {
+  extractedText: string;
+  name?: string;
+  amount?: number;
+  confidence: number;
+}
+
+export interface CameraCaptureProps {
+  onCapture: (capture: CameraCapture) => void;
+  onError: (error: string) => void;
+  className?: string;
+}
+
+export interface CameraConfig {
+  facingMode?: 'user' | 'environment';
+  width?: { ideal: number };
+  height?: { ideal: number };
+}
+
+export interface UseCameraReturn {
+  isClient: boolean;
+  stream: MediaStream | null;
+  error: Error | null;
+  isCameraReady: boolean;
+  facingMode: 'user' | 'environment';
+  videoRef: React.RefObject<HTMLVideoElement | null>;
+  canvasRef: React.RefObject<HTMLCanvasElement | null>;
+  toggleFacingMode: () => void;
+  takePhoto: () => string | null;
 }

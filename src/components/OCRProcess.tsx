@@ -1,12 +1,12 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import type { CameraCapture } from '@/types';
-import { useOCR } from '@/hooks/useOCR';
+import { useOCR } from '../hooks/useOCR';
+import type { CameraCapture, ContributionRecord } from '../types/index';
 
 interface OCRProcessProps {
   capture: CameraCapture;
-  onSuccess: (result: any) => void;
+  onSuccess: (result: Partial<ContributionRecord>) => void;
   onError: (error: string) => void;
   onCancel: () => void;
 }
@@ -43,7 +43,16 @@ export default function OCRProcess({
       
       await new Promise(resolve => setTimeout(resolve, 500));
       
-      onSuccess(result);
+      // ContributionRecord 형태로 변환
+      const contributionData: Partial<ContributionRecord> = {
+        name: result.name || '',
+        amount: result.amount || 0,
+        date: capture.timestamp,
+        imageData: capture.imageData,
+        memo: `OCR 신뢰도: ${Math.round(result.confidence * 100)}%`
+      };
+      
+      onSuccess(contributionData);
     } catch (err) {
       onError(err instanceof Error ? err.message : 'OCR 처리 중 오류가 발생했습니다.');
     }

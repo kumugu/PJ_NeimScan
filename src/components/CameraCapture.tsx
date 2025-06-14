@@ -1,345 +1,321 @@
 'use client';
 
-import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { useCamera } from '@/hooks/useCamera';
-import type { CameraCapture as CameraCaptureType } from '@/types';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { useCamera } from '../hooks/useCamera';
+import type { CameraCaptureProps, CameraCapture } from '../types/index';
 
-interface CameraCaptureProps {
-  onCapture: (capture: CameraCaptureType) => void;
-  onError: (error: string) => void;
-}
-
-export default function CameraCapture({ onCapture, onError }: CameraCaptureProps) {
-  // ✅ 1. 모든 useState를 먼저 선언 (조건 없이, 항상 같은 순서)
+const CameraCaptureComponent: React.FC<CameraCaptureProps> = ({
+  onCapture,
+  onError,
+  className = 'camera-container'
+}) => {
+  // 1. 모든 useState 선언부 - 항상 같은 순서로 호출
+  const [capturedImage, setCapturedImage] = useState<string | null>(null);
+  const [cameraPermission, setCameraPermission] = useState<'prompt' | 'granted' | 'denied'>('prompt');
   const [isCapturing, setIsCapturing] = useState(false);
-  const [showPermissionGuide, setShowPermissionGuide] = useState(false);
-  const [isCameraActive, setIsCameraActive] = useState(false);
-  const [isMounted, setIsMounted] = useState(false);
-
-  // ✅ 2. 모든 useRef를 다음에 선언
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   
-  // ✅ 3. useCamera 훅을 항상 같은 위치에서 호출
+  // 2. 모든 useRef 선언부
+  const mountedRef = useRef(true);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  // 3. useCamera 훅 호출 - 항상 같은 위치에서 호출
   const {
+    isClient,
     stream,
-    isLoading,
     error,
-    hasPermission,
-    requestPermission,
-    switchCamera,
-    currentFacingMode,
-    resetCamera
-  } = useCamera();
-
-  // ✅ 4. 모든 useEffect를 조건부 렌더링 이전에 배치 (항상 같은 순서)
-  // Effect 1: 마운트 상태 관리
-  useEffect(() => {
-    setIsMounted(true);
-  }, []);
-
-  // Effect 2: 스트림 상태 관리
-  useEffect(() => {
-    if (stream && videoRef.current) {
-      videoRef.current.srcObject = stream;
-      setIsCameraActive(true);
-    } else {
-      setIsCameraActive(false);
-    }
-  }, [stream]);
-
-  // Effect 3: 에러 처리
-  useEffect(() => {
-    if (error) {
-      onError(error);
-    }
-  }, [error, onError]);
-
-  // ✅ 5. 모든 useCallback을 조건부 렌더링 이전에 배치 (항상 같은 순서)
-  // Callback 1: 이미지 캡처
-  const captureImage = useCallback(async () => {
-    if (!videoRef.current || !canvasRef.current || isCapturing || !stream) return;
-
+    isCameraReady,
+    facingMode,
+    videoRef,
+    canvasRef,
+    toggleFacingMode,
+    takePhoto
+  } = useCamera({
+    facingMode: 'environment', // OCR을 위해 후면 카메라 기본 사용
+    width: { ideal: 1920 },
+    height: { ideal: 1080 }
+  });
+  
+  // 4. 모든 useCallback 선언부
+  const handleCapture = useCallback(() => {
+    if (!isClient || !isCameraReady || isCapturing) return;
+    
     setIsCapturing(true);
     
     try {
-      const video = videoRef.current;
-      const canvas = canvasRef.current;
-      const context = canvas.getContext('2d');
-
-      if (!context) throw new Error('Canvas context not available');
-
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      context.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-      const imageData = canvas.toDataURL('image/jpeg', 0.9);
-
-      const capture: CameraCaptureType = {
-        id: `capture_${Date.now()}`,
-        imageData,
-        timestamp: new Date(),
-        width: canvas.width,
-        height: canvas.height
-      };
-
-      onCapture(capture);
+      const photoData = takePhoto();
+      if (photoData && mountedRef.current) {
+        setCapturedImage(photoData);
+        
+        const captureData: CameraCapture = {
+          imageData: photoData,
+          timestamp: new Date()
+        };
+        
+        onCapture(captureData);
+      }
     } catch (err) {
-      onError(err instanceof Error ? err.message : 'Failed to capture image');
+      if (mountedRef.current) {
+        onError(err instanceof Error ? err.message : '사진 촬영 중 오류가 발생했습니다.');
+      }
     } finally {
       setIsCapturing(false);
     }
-  }, [isCapturing, onCapture, onError, stream]);
-
-  // Callback 2: 카메라 버튼 클릭
-  const handleCameraButtonClick = useCallback(async () => {
-    if (isCameraActive && stream) {
-      captureImage();
+  }, [isClient, isCameraReady, isCapturing, takePhoto, onCapture, onError]);
+  
+  const handleClearImage = useCallback(() => {
+    if (!isClient) return;
+    
+    if (mountedRef.current) {
+      setCapturedImage(null);
+    }
+  }, [isClient]);
+  
+  const handleFileSelect = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    if (!isClient) return;
+    
+    const file = event.target.files?.[0];
+    if (!file) return;
+    
+    // 이미지 파일 검증
+    if (!file.type.startsWith('image/')) {
+      onError('이미지 파일만 업로드할 수 있습니다.');
       return;
     }
-    await requestPermission();
-  }, [isCameraActive, stream, captureImage, requestPermission]);
-
-  // Callback 3: 카메라 재시도
-  const handleRetryCamera = useCallback(async () => {
-    await resetCamera();
-  }, [resetCamera]);
-
-  // Callback 4: 권한 가이드 열기
-  const openPermissionGuide = useCallback(() => {
-    setShowPermissionGuide(true);
+    
+    const reader = new FileReader();
+    reader.onload = (e: ProgressEvent<FileReader>) => {
+      if (e.target?.result && mountedRef.current) {
+        const imageData = e.target.result as string;
+        setCapturedImage(imageData);
+        
+        const captureData: CameraCapture = {
+          imageData,
+          timestamp: new Date()
+        };
+        
+        onCapture(captureData);
+      }
+    };
+    reader.readAsDataURL(file);
+  }, [isClient, onCapture, onError]);
+  
+  const handleOpenFileDialog = useCallback(() => {
+    if (!isClient || !fileInputRef.current) return;
+    fileInputRef.current.click();
+  }, [isClient]);
+  
+  const handleDownload = useCallback(() => {
+    if (!isClient || !capturedImage) return;
+    
+    const link = document.createElement('a');
+    link.href = capturedImage;
+    link.download = `capture-${new Date().toISOString()}.png`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }, [isClient, capturedImage]);
+  
+  // 5. 모든 useEffect 선언부
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+    };
   }, []);
-
-  // Callback 5: 권한 가이드 닫기
-  const closePermissionGuide = useCallback(() => {
-    setShowPermissionGuide(false);
-  }, []);
-
-  // ✅ 6. 조건부 렌더링을 모든 훅 이후에 배치
-  if (!isMounted) {
+  
+  // 오류 처리를 위한 useEffect
+  useEffect(() => {
+    if (!isClient) return;
+    
+    if (error) {
+      if (mountedRef.current) {
+        setCameraPermission('denied');
+        onError(error.message || '카메라 접근 중 오류가 발생했습니다.');
+      }
+    } else if (stream) {
+      if (mountedRef.current) {
+        setCameraPermission('granted');
+      }
+    }
+  }, [isClient, error, stream, onError]);
+  
+  // 카메라 권한 확인을 위한 useEffect
+  useEffect(() => {
+    if (!isClient) return;
+    
+    const checkPermissions = async () => {
+      try {
+        const result = await navigator.permissions.query({ name: 'camera' });
+        if (mountedRef.current) {
+          setCameraPermission(result.state as 'prompt' | 'granted' | 'denied');
+          
+          result.onchange = () => {
+            if (mountedRef.current) {
+              setCameraPermission(result.state as 'prompt' | 'granted' | 'denied');
+            }
+          };
+        }
+      } catch (err) {
+        // 일부 브라우저는 permissions API를 지원하지 않음
+        console.log('Permissions API not supported');
+      }
+    };
+    
+    checkPermissions();
+  }, [isClient]);
+  
+  // 6. 조건부 렌더링 - 모든 Hook 이후에 배치
+  if (!isClient) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-500"></div>
+      <div className={className}>
+        <div className="flex items-center justify-center h-full">
+          <div className="bg-white rounded-lg shadow-lg p-6 max-w-sm w-full">
+            <div className="flex flex-col items-center">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-500 mb-4"></div>
+              <p className="text-gray-600">카메라 준비 중...</p>
+            </div>
+          </div>
+        </div>
       </div>
     );
   }
-
-  if (hasPermission === false) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full p-6 text-center bg-gray-50">
-        <div className="bg-white rounded-lg shadow-lg p-8 max-w-md w-full">
-          <div className="mb-6">
-            <div className="w-20 h-20 mx-auto mb-4 bg-red-100 rounded-full flex items-center justify-center">
-              <svg className="w-10 h-10 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+  
+  return (
+    <div className={className}>
+      {cameraPermission === 'denied' && (
+        <div className="flex flex-col h-full bg-gray-50 justify-center items-center p-6">
+          <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-sm text-center">
+            <div className="w-16 h-16 bg-orange-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <svg className="w-8 h-8 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
               </svg>
             </div>
-          </div>
-          
-          <h3 className="text-xl font-semibold mb-3 text-gray-900">카메라 권한이 차단됨</h3>
-          <p className="text-gray-700 mb-6 leading-relaxed">
-            축의금 봉투를 스캔하려면 카메라 접근 권한이 필요합니다.
-          </p>
-          
-          <div className="space-y-3">
-            <button
-              onClick={requestPermission}
-              disabled={isLoading}
-              className="w-full bg-primary-500 text-white px-6 py-3 rounded-lg font-medium hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isLoading ? '권한 확인 중...' : '카메라 권한 다시 요청'}
-            </button>
-            
-            <button
-              onClick={openPermissionGuide}
-              className="w-full border border-gray-300 text-gray-700 px-6 py-3 rounded-lg font-medium hover:bg-gray-50"
-            >
-              설정 방법 보기
-            </button>
+            <h3 className="text-lg font-semibold text-gray-800 mb-2">카메라 권한 필요</h3>
+            <p className="text-gray-600 mb-6 text-sm leading-relaxed">
+              축의금 봉투를 촬영하려면 카메라 권한이 필요합니다.
+              브라우저 설정에서 카메라 권한을 허용해주세요.
+            </p>
+            <div className="space-y-3">
+              <button
+                onClick={handleOpenFileDialog}
+                className="w-full px-4 py-2 bg-primary-500 text-white rounded-lg font-medium hover:bg-primary-600"
+              >
+                📁 파일에서 선택
+              </button>
+              <p className="text-xs text-gray-500">대신 갤러리에서 사진을 선택할 수 있습니다</p>
+            </div>
+            <input
+              type="file"
+              ref={fileInputRef}
+              style={{ display: 'none' }}
+              accept="image/*"
+              onChange={handleFileSelect}
+            />
           </div>
         </div>
-
-        {/* 권한 설정 가이드 모달 */}
-        {showPermissionGuide && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-            <div className="bg-white rounded-lg max-w-lg w-full max-h-[80vh] overflow-y-auto">
-              <div className="p-6">
-                <div className="flex justify-between items-center mb-4">
-                  <h4 className="text-lg font-semibold text-gray-900">Safari 카메라 권한 설정</h4>
-                  <button
-                    onClick={closePermissionGuide}
-                    className="text-gray-400 hover:text-gray-600"
-                  >
-                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
+      )}
+      
+      {cameraPermission === 'granted' && (
+        <div className="flex flex-col h-full">
+          {!capturedImage ? (
+            <>
+              {/* 카메라 뷰 */}
+              <div className="flex-1 relative bg-black">
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="w-full h-full object-cover"
+                />
+                
+                {/* 촬영 가이드 오버레이 */}
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                  <div className="border-2 border-white border-dashed rounded-lg w-80 h-48 opacity-50">
+                    <div className="text-white text-center mt-20 text-sm">
+                      축의금 봉투를 이 영역에 맞춰주세요
+                    </div>
+                  </div>
                 </div>
                 
-                <div className="space-y-4">
-                  <div className="p-4 bg-blue-50 rounded-lg">
-                    <h5 className="font-medium text-blue-900 mb-2">Safari 브라우저에서:</h5>
-                    <ol className="text-sm text-blue-800 space-y-1 list-decimal list-inside">
-                      <li>주소창 왼쪽의 "aA" 버튼 터치</li>
-                      <li>"웹사이트 설정" 선택</li>
-                      <li>"카메라"를 "허용"으로 변경</li>
-                      <li>페이지 새로고침</li>
-                    </ol>
-                  </div>
-                  
-                  <div className="p-4 bg-amber-50 rounded-lg">
-                    <h5 className="font-medium text-amber-900 mb-2">설정 앱에서 (전체 허용):</h5>
-                    <ol className="text-sm text-amber-800 space-y-1 list-decimal list-inside">
-                      <li>설정 - Safari</li>
-                      <li>"카메라" 선택</li>
-                      <li>"허용"으로 변경</li>
-                    </ol>
-                    <p className="text-xs text-amber-700 mt-2">⚠️ 모든 웹사이트에 카메라 권한이 부여됩니다</p>
-                  </div>
+                {/* 상단 버튼들 */}
+                <div className="absolute top-4 left-4 right-4 flex justify-between">
+                  <button
+                    onClick={toggleFacingMode}
+                    className="bg-black bg-opacity-50 text-white p-2 rounded-full"
+                  >
+                    📷
+                  </button>
+                  <button
+                    onClick={handleOpenFileDialog}
+                    className="bg-black bg-opacity-50 text-white p-2 rounded-full"
+                  >
+                    📁
+                  </button>
                 </div>
               </div>
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  if (hasPermission === null) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full p-6 text-center bg-gray-50">
-        <div className="bg-white rounded-lg shadow-lg p-8 max-w-md w-full">
-          <div className="mb-6">
-            <div className="w-20 h-20 mx-auto mb-4 bg-blue-100 rounded-full flex items-center justify-center">
-              <svg className="w-10 h-10 text-blue-600 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-            </div>
-          </div>
-          
-          <h3 className="text-xl font-semibold mb-3 text-gray-900">카메라 준비 중...</h3>
-          <p className="text-gray-700 mb-6">잠시만 기다려주세요.</p>
-          
-          <button
-            onClick={handleCameraButtonClick}
-            disabled={isLoading}
-            className="w-full bg-primary-500 text-white px-6 py-3 rounded-lg font-medium hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isLoading ? '카메라 시작 중...' : '카메라 시작하기'}
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="relative w-full h-full bg-black">
-      <video
-        ref={videoRef}
-        autoPlay
-        playsInline
-        muted
-        className="w-full h-full object-cover"
-      />
-
-      <canvas ref={canvasRef} className="hidden" />
-
-      {error && !isCameraActive && (
-        <div className="absolute inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4">
-          <div className="bg-white rounded-lg p-6 max-w-sm w-full text-center">
-            <div className="w-16 h-16 mx-auto mb-4 bg-red-100 rounded-full flex items-center justify-center">
-              <svg className="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            </div>
-            <h4 className="text-lg font-semibold mb-2 text-gray-900">카메라 오류</h4>
-            <p className="text-sm text-gray-600 mb-4">{error}</p>
-            <button
-              onClick={handleRetryCamera}
-              className="w-full bg-primary-500 text-white px-4 py-2 rounded-lg font-medium hover:bg-primary-600"
-            >
-              다시 시도
-            </button>
-          </div>
-        </div>
-      )}
-
-      <div className="absolute inset-0 flex flex-col justify-between p-4">
-        <div className="flex justify-between items-center">
-          <div className="bg-black bg-opacity-60 text-white px-4 py-2 rounded-full text-sm font-medium backdrop-blur-sm">
-            {isCameraActive ? '축의금 봉투를 화면에 맞춰 주세요' : '카메라 시작하기'}
-          </div>
-          
-          {isCameraActive && (
-            <button
-              onClick={switchCamera}
-              className="bg-black bg-opacity-60 text-white p-3 rounded-full hover:bg-opacity-80 backdrop-blur-sm"
-              disabled={isLoading}
-            >
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-            </button>
+              
+              {/* 하단 컨트롤 */}
+              <div className="bg-white p-6">
+                <div className="flex justify-center items-center">
+                  <button
+                    onClick={handleCapture}
+                    disabled={!isCameraReady || isCapturing}
+                    className="w-16 h-16 bg-primary-500 text-white rounded-full flex items-center justify-center text-2xl font-bold hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isCapturing ? '...' : '📸'}
+                  </button>
+                </div>
+                <p className="text-center text-gray-600 text-sm mt-2">
+                  축의금 봉투를 촬영하세요
+                </p>
+              </div>
+            </>
+          ) : (
+            <>
+              {/* 촬영된 이미지 뷰 */}
+              <div className="flex-1 bg-gray-100 flex items-center justify-center p-4">
+                <img 
+                  src={capturedImage} 
+                  alt="Captured" 
+                  className="max-w-full max-h-full object-contain rounded-lg shadow-lg"
+                />
+              </div>
+              
+              {/* 하단 버튼들 */}
+              <div className="bg-white p-6">
+                <div className="flex space-x-3">
+                  <button
+                    onClick={handleClearImage}
+                    className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50"
+                  >
+                    다시 촬영
+                  </button>
+                  <button
+                    onClick={handleDownload}
+                    className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50"
+                  >
+                    💾
+                  </button>
+                </div>
+              </div>
+            </>
           )}
         </div>
-
-        {isCameraActive && (
-          <div className="flex-1 flex items-center justify-center px-8">
-            <div className="relative border-2 border-white border-dashed rounded-xl w-full max-w-sm aspect-[4/3] flex items-center justify-center">
-              <div className="absolute top-2 left-2 w-6 h-6 border-l-2 border-t-2 border-white"></div>
-              <div className="absolute top-2 right-2 w-6 h-6 border-r-2 border-t-2 border-white"></div>
-              <div className="absolute bottom-2 left-2 w-6 h-6 border-l-2 border-b-2 border-white"></div>
-              <div className="absolute bottom-2 right-2 w-6 h-6 border-r-2 border-b-2 border-white"></div>
-              
-              <span className="text-white text-sm font-medium bg-black bg-opacity-50 px-3 py-1 rounded-full">
-                봉투를 이 영역에 맞춰 주세요
-              </span>
-            </div>
-          </div>
-        )}
-
-        <div className="flex justify-center items-center">
-          <div className="flex items-center space-x-6">
-            <button
-              onClick={handleCameraButtonClick}
-              disabled={isCapturing || isLoading}
-              className={`
-                relative w-20 h-20 rounded-full border-4 border-white 
-                ${isCameraActive 
-                  ? 'bg-white hover:bg-gray-100' 
-                  : 'bg-primary-500 hover:bg-primary-600 text-white'
-                }
-                disabled:opacity-50 disabled:cursor-not-allowed
-                transition-all duration-200 ease-in-out
-                shadow-lg
-              `}
-            >
-              {isLoading ? (
-                <div className="w-6 h-6 border-2 border-current border-t-transparent rounded-full animate-spin mx-auto" />
-              ) : isCapturing ? (
-                <div className="absolute inset-2 border-2 border-primary-500 rounded-full animate-pulse" />
-              ) : isCameraActive ? (
-                <svg className="w-8 h-8 mx-auto text-gray-800" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M12 15.5A3.5 3.5 0 0 1 8.5 12A3.5 3.5 0 0 1 12 8.5a3.5 3.5 0 0 1 3.5 3.5a3.5 3.5 0 0 1-3.5 3.5m7.43-2.53c.04-.32.07-.64.07-.97c0-.33-.03-.66-.07-1L21.99 10c-.25-2.69-2.61-5-5.33-5.24l-.21-1.77C16.24 2.45 15.47 2 14.59 2H9.41c-.88 0-1.65.45-1.86 1.01L7.34 4.78C4.62 5.03 2.26 7.34 2.01 10L4.57 11c-.04.34-.07.67-.07 1c0 .33.03.65.07.97L2.01 14c.25 2.66 2.61 4.97 5.33 5.22l.21 1.77C7.76 21.55 8.53 22 9.41 22h5.18c.88 0 1.65-.45 1.86-1.01l.21-1.76C19.38 18.97 21.74 16.66 21.99 14l-2.56-1.03Z"/>
-                </svg>
-              ) : (
-                <svg className="w-8 h-8 mx-auto" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M8 5v14l11-7z"/>
-                </svg>
-              )}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {isCapturing && (
-        <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center">
-          <div className="bg-white rounded-lg p-6 text-center">
-            <div className="w-8 h-8 border-2 border-primary-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-            <p className="text-gray-700 font-medium">촬영 중...</p>
-          </div>
-        </div>
       )}
+      
+      {/* 숨겨진 파일 입력 */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        style={{ display: 'none' }}
+        accept="image/*"
+        onChange={handleFileSelect}
+      />
+      
+      {/* 숨겨진 캔버스 */}
+      <canvas ref={canvasRef} style={{ display: 'none' }} />
     </div>
   );
-}
+};
+
+export default CameraCaptureComponent;
