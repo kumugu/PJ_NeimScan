@@ -5,4 +5,15 @@ const nextConfig = {
   },
 }
 
-module.exports = nextConfig
+module.exports = {
+  experimental: {
+    esmExternals: false
+  },
+  webpack: (config) => {
+    config.resolve.fallback = {
+      ...config.resolve.fallback,
+      fs: false,
+    };
+    return config;
+  }
+}
