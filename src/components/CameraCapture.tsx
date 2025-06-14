@@ -16,7 +16,7 @@ const CameraCaptureComponent: React.FC<CameraCaptureProps> = ({
   
   // 2. 모든 useRef 선언부
   const mountedRef = useRef(true);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null!);
   
   // 3. useCamera 훅 호출 - 항상 같은 위치에서 호출
   const {
@@ -82,6 +82,12 @@ const CameraCaptureComponent: React.FC<CameraCaptureProps> = ({
       return;
     }
     
+    // 파일 크기 검증 (5MB 제한)
+    if (file.size > 5 * 1024 * 1024) {
+      onError('파일 크기가 너무 큽니다. 5MB 이하의 이미지를 선택해주세요.');
+      return;
+    }
+    
     const reader = new FileReader();
     reader.onload = (e: ProgressEvent<FileReader>) => {
       if (e.target?.result && mountedRef.current) {
@@ -109,7 +115,7 @@ const CameraCaptureComponent: React.FC<CameraCaptureProps> = ({
     
     const link = document.createElement('a');
     link.href = capturedImage;
-    link.download = `capture-${new Date().toISOString()}.png`;
+    link.download = `neimscan-capture-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.jpg`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -203,13 +209,6 @@ const CameraCaptureComponent: React.FC<CameraCaptureProps> = ({
               </button>
               <p className="text-xs text-gray-500">대신 갤러리에서 사진을 선택할 수 있습니다</p>
             </div>
-            <input
-              type="file"
-              ref={fileInputRef}
-              style={{ display: 'none' }}
-              accept="image/*"
-              onChange={handleFileSelect}
-            />
           </div>
         </div>
       )}
@@ -241,13 +240,15 @@ const CameraCaptureComponent: React.FC<CameraCaptureProps> = ({
                 <div className="absolute top-4 left-4 right-4 flex justify-between">
                   <button
                     onClick={toggleFacingMode}
-                    className="bg-black bg-opacity-50 text-white p-2 rounded-full"
+                    className="bg-black bg-opacity-50 text-white p-2 rounded-full hover:bg-opacity-70"
+                    title="카메라 전환"
                   >
                     📷
                   </button>
                   <button
                     onClick={handleOpenFileDialog}
-                    className="bg-black bg-opacity-50 text-white p-2 rounded-full"
+                    className="bg-black bg-opacity-50 text-white p-2 rounded-full hover:bg-opacity-70"
+                    title="파일에서 선택"
                   >
                     📁
                   </button>
@@ -260,13 +261,13 @@ const CameraCaptureComponent: React.FC<CameraCaptureProps> = ({
                   <button
                     onClick={handleCapture}
                     disabled={!isCameraReady || isCapturing}
-                    className="w-16 h-16 bg-primary-500 text-white rounded-full flex items-center justify-center text-2xl font-bold hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="w-16 h-16 bg-primary-500 text-white rounded-full flex items-center justify-center text-2xl font-bold hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
                   >
-                    {isCapturing ? '...' : '📸'}
+                    {isCapturing ? '⏳' : '📸'}
                   </button>
                 </div>
                 <p className="text-center text-gray-600 text-sm mt-2">
-                  축의금 봉투를 촬영하세요
+                  {!isCameraReady ? '카메라 준비 중...' : '축의금 봉투를 촬영하세요'}
                 </p>
               </div>
             </>
@@ -276,7 +277,7 @@ const CameraCaptureComponent: React.FC<CameraCaptureProps> = ({
               <div className="flex-1 bg-gray-100 flex items-center justify-center p-4">
                 <img 
                   src={capturedImage} 
-                  alt="Captured" 
+                  alt="촬영된 축의금 봉투" 
                   className="max-w-full max-h-full object-contain rounded-lg shadow-lg"
                 />
               </div>
@@ -286,13 +287,14 @@ const CameraCaptureComponent: React.FC<CameraCaptureProps> = ({
                 <div className="flex space-x-3">
                   <button
                     onClick={handleClearImage}
-                    className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50"
+                    className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50 transition-colors"
                   >
                     다시 촬영
                   </button>
                   <button
                     onClick={handleDownload}
-                    className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50"
+                    className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50 transition-colors"
+                    title="이미지 다운로드"
                   >
                     💾
                   </button>

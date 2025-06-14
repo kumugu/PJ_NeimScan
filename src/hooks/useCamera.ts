@@ -11,10 +11,10 @@ export const useCamera = (initialConfig: CameraConfig = {}): UseCameraReturn => 
     initialConfig.facingMode || 'environment'
   );
   
-  // 2. 모든 useRef 선언부
+  // 2. 모든 useRef 선언부 - null assertion으로 타입 오류 해결
   const mountedRef = useRef(true);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null!);
+  const canvasRef = useRef<HTMLCanvasElement>(null!);
   
   // 3. useLayoutEffect - 클라이언트 감지
   useLayoutEffect(() => {
@@ -48,8 +48,8 @@ export const useCamera = (initialConfig: CameraConfig = {}): UseCameraReturn => 
     // 비디오 프레임을 캔버스에 그리기
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
     
-    // PNG 형식으로 데이터 URL 생성 (OCR에 최적)
-    return canvas.toDataURL('image/png');
+    // JPEG 형식으로 데이터 URL 생성 (OCR API 호환성 및 파일 크기 최적화)
+    return canvas.toDataURL('image/jpeg', 0.92);
   }, [isClient, stream]);
   
   // 5. 모든 useEffect 선언부
@@ -65,6 +65,7 @@ export const useCamera = (initialConfig: CameraConfig = {}): UseCameraReturn => 
               facingMode: facingMode,
               width: initialConfig.width || { ideal: 1920 },
               height: initialConfig.height || { ideal: 1080 }
+              // focusMode와 exposureMode 제거 - 표준 Web API에 없음
             }
             // audio 완전 제거 - OCR 목적이므로 불필요
           };
@@ -74,6 +75,11 @@ export const useCamera = (initialConfig: CameraConfig = {}): UseCameraReturn => 
           if (mountedRef.current) {
             setStream(mediaStream);
             setError(null);
+            
+            // 비디오 요소에 스트림 연결 (중요: 이 부분이 누락되어 있었음)
+            if (videoRef.current) {
+              videoRef.current.srcObject = mediaStream;
+            }
           }
         }
       } catch (err) {
@@ -102,8 +108,20 @@ export const useCamera = (initialConfig: CameraConfig = {}): UseCameraReturn => 
       return;
     }
     
-    if (mountedRef.current) {
-      setIsCameraReady(true);
+    if (mountedRef.current && videoRef.current) {
+      // 비디오 메타데이터 로드 완료 시 카메라 준비 완료로 설정
+      const video = videoRef.current;
+      const handleLoadedMetadata = () => {
+        if (mountedRef.current) {
+          setIsCameraReady(true);
+        }
+      };
+      
+      video.addEventListener('loadedmetadata', handleLoadedMetadata);
+      
+      return () => {
+        video.removeEventListener('loadedmetadata', handleLoadedMetadata);
+      };
     }
   }, [stream]);
   

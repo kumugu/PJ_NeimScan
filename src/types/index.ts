@@ -1,3 +1,4 @@
+import React from 'react';
 
 export interface ContributionRecord {
   id?: string;
@@ -46,8 +47,8 @@ export interface UseCameraReturn {
   error: Error | null;
   isCameraReady: boolean;
   facingMode: 'user' | 'environment';
-  videoRef: React.RefObject<HTMLVideoElement | null>;
-  canvasRef: React.RefObject<HTMLCanvasElement | null>;
+  videoRef: React.RefObject<HTMLVideoElement>;
+  canvasRef: React.RefObject<HTMLCanvasElement>;
   toggleFacingMode: () => void;
   takePhoto: () => string | null;
 }

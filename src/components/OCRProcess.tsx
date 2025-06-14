@@ -1,12 +1,12 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
+import type { CameraCapture } from '../types/index';
 import { useOCR } from '../hooks/useOCR';
-import type { CameraCapture, ContributionRecord } from '../types/index';
 
 interface OCRProcessProps {
   capture: CameraCapture;
-  onSuccess: (result: Partial<ContributionRecord>) => void;
+  onSuccess: (result: any) => void;
   onError: (error: string) => void;
   onCancel: () => void;
 }
@@ -21,11 +21,7 @@ export default function OCRProcess({
   const [progress, setProgress] = useState(0);
   const [currentStep, setCurrentStep] = useState('이미지 분석 중...');
 
-  useEffect(() => {
-    startOCRProcess();
-  }, [capture]);
-
-  const startOCRProcess = async () => {
+  const startOCRProcess = useCallback(async () => {
     try {
       // 단계별 진행 시뮬레이션
       setCurrentStep('이미지 전처리 중...');
@@ -43,20 +39,15 @@ export default function OCRProcess({
       
       await new Promise(resolve => setTimeout(resolve, 500));
       
-      // ContributionRecord 형태로 변환
-      const contributionData: Partial<ContributionRecord> = {
-        name: result.name || '',
-        amount: result.amount || 0,
-        date: capture.timestamp,
-        imageData: capture.imageData,
-        memo: `OCR 신뢰도: ${Math.round(result.confidence * 100)}%`
-      };
-      
-      onSuccess(contributionData);
+      onSuccess(result);
     } catch (err) {
       onError(err instanceof Error ? err.message : 'OCR 처리 중 오류가 발생했습니다.');
     }
-  };
+  }, [capture.imageData, processOCR, onSuccess, onError]);
+
+  useEffect(() => {
+    startOCRProcess();
+  }, [startOCRProcess]);
 
   if (error) {
     return (
@@ -75,7 +66,7 @@ export default function OCRProcess({
           
           <div className="space-y-3">
             <button
-              onClick={() => startOCRProcess()}
+              onClick={startOCRProcess}
               className="w-full px-4 py-2 bg-primary-500 text-white rounded-lg font-medium hover:bg-primary-600"
             >
               다시 시도
